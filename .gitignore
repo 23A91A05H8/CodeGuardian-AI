@@ -1,0 +1,33 @@
+# Node
+node_modules/
+dist/
+build/
+.env
+*.local
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.egg-info/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Uploads
+backend/uploads/*
+!backend/uploads/.gitkeep
+# Environment variables
+.env
+.env.*
+!.env.example
