@@ -15,19 +15,27 @@ export const app = express();
 // Security HTTP headers
 app.use(helmet());
 
-// CORS configuration supporting single origin, list of origins, or localhost dev
-const allowedOrigins = config.CLIENT_URL.split(",").map((s) => s.trim());
+// CORS configuration supporting single origin, a comma-separated list, or "*".
+// In development, "localhost" and "127.0.0.1" are treated as equivalent so opening the
+// app via either address works (a browser treats them as different origins).
+const allowedOrigins = config.CLIENT_URL.split(",").map((s) => s.trim()).filter(Boolean);
+if (config.NODE_ENV !== "production") {
+  for (const origin of [...allowedOrigins]) {
+    if (origin.includes("localhost")) allowedOrigins.push(origin.replace("localhost", "127.0.0.1"));
+    if (origin.includes("127.0.0.1")) allowedOrigins.push(origin.replace("127.0.0.1", "localhost"));
+  }
+}
 app.use(
   cors({
-   origin: (origin, callback) => {
-  if (!origin) return callback(null, true);
-
-  if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
-    return callback(null, true);
-  }
-
-  return callback(new Error("Not allowed by CORS"));
-},
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes("*") || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      const err: any = new Error(`Origin ${origin} is not allowed by CORS. Set CLIENT_URL in backend/.env to include it.`);
+      err.status = 403;
+      return callback(err);
+    },
     credentials: true,
   })
 );

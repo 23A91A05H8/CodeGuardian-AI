@@ -72,3 +72,4 @@ class FullAnalysisResponse(BaseModel):
     tests: Optional[GeneratedTests] = None
     docs: Optional[GeneratedDocs] = None
     mock_mode: bool = False
+    fallback_reason: Optional[str] = None

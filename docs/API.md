@@ -80,3 +80,16 @@ Request body for all of the above:
 ```json
 { "code": "string", "language": "auto|python|javascript|...", "filename": "optional.py" }
 ```
+
+## Analysis result fields added for resilience
+
+Every AI-service response (and the `result` object stored in each analysis) includes:
+
+| Field | Meaning |
+|---|---|
+| `mock_mode` | `true` when the built-in heuristic analyzer produced the result instead of watsonx.ai |
+| `fallback_reason` | Human-readable reason when `mock_mode` is `true` (credentials missing, request failed, unparsable/empty model output); otherwise `null` |
+
+The AI service never answers an analysis request with HTTP 500 because of imperfect model output: responses are normalized (severity casing, line numbers, list/string coercion, wrapped objects, fenced or slightly malformed JSON) and, if still unusable, replaced by heuristic output with a `fallback_reason`.
+
+Backend error mapping for `POST /api/analyze`: `400` invalid input, `429` upstream rate limit, `503` AI service unreachable, `504` AI service timeout, `502` any other AI-service failure. Upstream `401/403` are never forwarded.

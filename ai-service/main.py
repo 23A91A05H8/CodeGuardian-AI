@@ -116,34 +116,45 @@ def health():
 def _build_response(analysis_type: str, req: CodeRequest) -> FullAnalysisResponse:
     require_non_empty_code(req.code)
     try:
-        result, mock_mode = analyzer.analyze(analysis_type, req)
+        result, mock_mode, fallback_reason = analyzer.analyze(analysis_type, req)
+
+        response = FullAnalysisResponse(
+            analysis_type=analysis_type, mock_mode=mock_mode, fallback_reason=fallback_reason
+        )
+        issue_count = 0
+        high_severity = 0
+
+        if analysis_type == "explain":
+            response.explanation = ExplanationResult(**result)
+        elif analysis_type == "bugs":
+            response.bugs = BugReport(**result)
+            issue_count = len(response.bugs.issues)
+            high_severity = sum(1 for i in response.bugs.issues if i.severity in ("high", "critical"))
+        elif analysis_type == "security":
+            response.security = SecurityReport(**result)
+            issue_count = len(response.security.issues)
+            high_severity = sum(1 for i in response.security.issues if i.severity in ("high", "critical"))
+        elif analysis_type == "refactor":
+            response.refactor = RefactorSuggestion(**result)
+        elif analysis_type == "tests":
+            response.tests = GeneratedTests(**result)
+        elif analysis_type == "docs":
+            response.docs = GeneratedDocs(**result)
+
+        # "No issues" placeholder entries must not reduce the quality score
+        if analysis_type in ("bugs", "security"):
+            placeholder = {"No obvious bugs detected", "No high-risk patterns detected"}
+            report = response.bugs or response.security
+            real = [i for i in report.issues if i.title not in placeholder]
+            issue_count = len(real)
+            high_severity = sum(1 for i in real if i.severity in ("high", "critical"))
+
+        response.quality_score = analyzer.compute_quality_score(req.code, issue_count, high_severity)
+        return response
+    except HTTPException:
+        raise
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"Analysis failed: {exc}") from exc
-
-    response = FullAnalysisResponse(analysis_type=analysis_type, mock_mode=mock_mode)
-
-    issue_count = 0
-    high_severity = 0
-
-    if analysis_type == "explain":
-        response.explanation = ExplanationResult(**result)
-    elif analysis_type == "bugs":
-        response.bugs = BugReport(**result)
-        issue_count = len(response.bugs.issues)
-        high_severity = sum(1 for i in response.bugs.issues if i.severity in ("high", "critical"))
-    elif analysis_type == "security":
-        response.security = SecurityReport(**result)
-        issue_count = len(response.security.issues)
-        high_severity = sum(1 for i in response.security.issues if i.severity in ("high", "critical"))
-    elif analysis_type == "refactor":
-        response.refactor = RefactorSuggestion(**result)
-    elif analysis_type == "tests":
-        response.tests = GeneratedTests(**result)
-    elif analysis_type == "docs":
-        response.docs = GeneratedDocs(**result)
-
-    response.quality_score = analyzer.compute_quality_score(req.code, issue_count, high_severity)
-    return response
 
 
 @app.post("/analyze/code", response_model=FullAnalysisResponse)

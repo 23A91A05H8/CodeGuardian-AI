@@ -6,7 +6,8 @@ const API_URL = rawApiUrl.endsWith("/") ? rawApiUrl.slice(0, -1) : rawApiUrl;
 
 export const api = axios.create({
   baseURL: API_URL,
-  timeout: 45000,
+  // LLM analysis can be slow; keep this longer than the backend's 120s upstream timeout
+  timeout: 130000,
   headers: {
     "Content-Type": "application/json",
   },

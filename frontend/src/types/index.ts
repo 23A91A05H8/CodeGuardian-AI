@@ -17,6 +17,7 @@ export interface QualityScore {
 export interface AnalysisResult {
   analysis_type: AnalysisType;
   mock_mode: boolean;
+  fallback_reason?: string | null;
   quality_score?: QualityScore;
   explanation?: {
     purpose: string;

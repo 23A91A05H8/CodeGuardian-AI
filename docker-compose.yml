@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   mongodb:
     image: mongo:7
@@ -23,7 +21,8 @@ services:
     container_name: codeguardian-ai-service
     restart: unless-stopped
     env_file:
-      - ./ai-service/.env
+      - path: ./ai-service/.env
+        required: false
     ports:
       - "8000:8000"
     networks:
@@ -34,7 +33,8 @@ services:
     container_name: codeguardian-backend
     restart: unless-stopped
     env_file:
-      - ./backend/.env
+      - path: ./backend/.env
+        required: false
     environment:
       - MONGO_URI=mongodb://mongodb:27017/codeguardian
       - AI_SERVICE_URL=http://ai-service:8000
@@ -56,7 +56,8 @@ services:
     container_name: codeguardian-frontend
     restart: unless-stopped
     environment:
-      - VITE_API_URL=http://backend:5000/api
+      # Runs in the BROWSER, so it must be a host-reachable address (not the docker hostname 'backend')
+      - VITE_API_URL=http://localhost:5000/api
     depends_on:
       - backend
     ports:

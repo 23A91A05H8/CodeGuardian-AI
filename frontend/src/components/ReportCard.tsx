@@ -166,6 +166,12 @@ export default function ReportCard({ result }: { result: AnalysisResult }) {
         </button>
       </div>
 
+      {result.mock_mode && result.fallback_reason && (
+        <p className="text-xs text-amber-300/90 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2">
+          <span className="font-semibold">Why demo mode?</span> {result.fallback_reason}
+        </p>
+      )}
+
       {result.explanation && (
         <div className="space-y-4">
           <div className="flex items-center justify-between">

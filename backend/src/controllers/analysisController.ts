@@ -4,6 +4,9 @@ import { Analysis } from "../models/Analysis";
 import { AuthRequest } from "../middleware/authMiddleware";
 import { config } from "../config/env";
 
+// LLM calls can take a while; the frontend timeout (130s) is deliberately longer than this.
+const AI_TIMEOUT_MS = 120_000;
+
 const ENDPOINT_MAP: Record<string, string> = {
   explain: "/analyze/code",
   bugs: "/analyze/bugs",
@@ -37,7 +40,7 @@ export const analyzeCode = async (req: AuthRequest, res: Response, next: NextFun
         filename: filename || undefined,
       },
       {
-        timeout: 45000,
+        timeout: AI_TIMEOUT_MS,
         headers: {
           "Content-Type": "application/json",
         },
@@ -60,16 +63,31 @@ export const analyzeCode = async (req: AuthRequest, res: Response, next: NextFun
     return res.status(200).json({ analysis: record });
   } catch (error: any) {
     if (error.isAxiosError) {
-      const status = error.response?.status || 502;
+      const upstreamStatus: number | undefined = error.response?.status;
+      const upstream = error.response?.data;
       const detail =
-        error.response?.data?.detail ||
-        error.response?.data?.message ||
+        (typeof upstream === "object" && (upstream?.detail || upstream?.message)) ||
         error.message ||
         "AI microservice unavailable";
-      return res.status(status).json({
-        message: "AI analysis service failed to process the request",
-        details: detail,
-      });
+
+      // Never forward upstream 401/403: the browser would interpret it as "session expired" and log the user out.
+      let status = 502;
+      let message = "The AI analysis service failed to process the request.";
+      if (error.code === "ECONNABORTED" || error.code === "ETIMEDOUT") {
+        status = 504;
+        message = "The AI analysis service timed out. Try again, or analyze a smaller snippet.";
+      } else if (!error.response) {
+        status = 503;
+        message = `Cannot reach the AI analysis service at ${config.AI_SERVICE_URL}. Is it running?`;
+      } else if (upstreamStatus === 429) {
+        status = 429;
+        message = "The AI analysis service is rate limiting requests. Please wait a moment and retry.";
+      } else if (upstreamStatus === 400 || upstreamStatus === 422) {
+        status = 400;
+        message = "The AI analysis service rejected the submitted code.";
+      }
+      console.error(`[analyze] AI service error (${upstreamStatus ?? error.code}):`, detail);
+      return res.status(status).json({ message, details: typeof detail === "string" ? detail : JSON.stringify(detail) });
     }
     return next(error);
   }
