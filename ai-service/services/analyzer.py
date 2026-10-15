@@ -6,8 +6,13 @@ model returns into the strict schema, and - if anything goes wrong at any stage 
 fall back to a deterministic heuristic analyzer so the user always gets a result.
 The reason for a fallback is returned so the UI can explain it.
 """
+
+
 import logging
 import re
+import ast
+import subprocess
+import sys
 from typing import List, Optional, Tuple
 
 from models.schemas import CodeRequest, QualityScore
@@ -131,6 +136,23 @@ _BUG_RULES = [
     ("Unresolved TODO/FIXME", "low", r"\b(?:TODO|FIXME|XXX)\b", 0,
      "The code contains TODO/FIXME markers indicating incomplete logic.",
      "Resolve these or track them in an issue before shipping."),
+    ("Possible SQL injection", "high",
+     r"""(?im)^\s*\w+\s*=\s*(?:f["'].*(?:SELECT|INSERT|UPDATE|DELETE)|["'].*(?:SELECT|INSERT|UPDATE|DELETE).*(?:["']\s*\+|\%\s*\w+))""", 0,
+     "SQL query text appears to be constructed dynamically using string concatenation or formatting.",
+     "Use parameterized SQL queries instead of string concatenation."),
+    ("Possible hardcoded secret", "high",
+     r"""(?im)^\s*(?:API_KEY|SECRET_KEY|PASSWORD|TOKEN)\s*=\s*["'][^"']{8,}["']""", 0,
+     "A variable with a sensitive name contains a hardcoded string value.",
+     "Load secrets from environment variables or a secrets manager."),
+    ("Possible division by zero",
+     "high",
+     r"""/\s*\(\s*\w+\s*[-+]\s*\d+\s*\)""", 0,
+     "The divisor is an expression that may evaluate to zero.",
+     "Check that the divisor is nonzero before dividing."),
+    ("Possible empty collection division", "high",
+     r"""(?i)/\s*len\s*\(\s*\w+\s*\)""", 0,
+     "Dividing by the length of a collection may cause division by zero when the collection is empty.",
+     "Check that the collection is not empty before dividing."),
 ]
 
 # Rules that only make sense for particular languages (everything else applies everywhere).
@@ -204,6 +226,87 @@ def _leak_line(code: str, language: str) -> Optional[int]:
     return None
 
 
+
+def _pyflakes_issues(code: str) -> List[dict]:
+    """Detect common Python errors using Pyflakes."""
+    import os
+    import tempfile
+
+    issues: List[dict] = []
+    temp_path = None
+
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".py",
+            encoding="utf-8",
+            delete=False,
+        ) as temp_file:
+            temp_file.write(code)
+            temp_path = temp_file.name
+
+        result = subprocess.run(
+            [sys.executable, "-m", "pyflakes", temp_path],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+
+        for output_line in result.stdout.splitlines() + result.stderr.splitlines():
+            match = re.match(r".*?\.py:(\d+):(\d+):\s*(.*)", output_line)
+            if not match:
+                continue
+
+            line = int(match.group(1))
+            message = match.group(3)
+
+            if "undefined name" in message:
+                title = "Undefined variable"
+                severity = "high"
+                recommendation = (
+                    "Define the variable or correct its spelling before using it."
+                )
+            elif "imported but unused" in message:
+                title = "Unused import"
+                severity = "low"
+                recommendation = "Remove the unused import or use it in the code."
+            else:
+                title = "Python static analysis warning"
+                severity = "medium"
+                recommendation = (
+                    "Review this Pyflakes warning and correct it if necessary."
+                )
+
+            issues.append(
+                _issue(
+                    title,
+                    severity,
+                    message,
+                    recommendation,
+                    line,
+                )
+            )
+
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        logger.warning("Pyflakes check failed: %s", exc)
+
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError as exc:
+                logger.warning("Could not remove temporary file: %s", exc)
+
+    return issues
+
+
+
+
+
+
+
+
 def _mock_bugs(code: str, language: str) -> dict:
     issues: List[dict] = []
     for title, severity, pattern, flags, description, recommendation in _BUG_RULES:
@@ -212,7 +315,18 @@ def _mock_bugs(code: str, language: str) -> dict:
         line = _line_of(code, pattern, flags)
         if line is not None:
             issues.append(_issue(title, severity, description, recommendation, line))
+        if language.strip().lower() in ("python", "py"):
+            existing = {
+        (issue["title"], issue["line"])
+        for issue in issues
+    }
 
+            for issue in _pyflakes_issues(code):
+
+                key = (issue["title"], issue["line"])
+                if key not in existing:
+                    issues.append(issue)
+                    existing.add(key)
     leak = _leak_line(code, language)
     if leak is not None:
         issues.append(_issue(
